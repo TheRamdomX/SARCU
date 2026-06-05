@@ -3,16 +3,23 @@ Servicio de Autenticación — SCG (Sistema de Control de Gastos)
 Nombre en el bus: "sauth"  (exactamente 5 caracteres)
 
 Operaciones que acepta (campo "op" en el JSON):
-  - login   : autentica al usuario con email/password
-  - verify  : verifica si un token JWT sigue vigente y devuelve el rol
+  - login        : autentica con email/password → devuelve JWT + rol
+  - verify       : verifica un JWT vigente → devuelve user_id + rol
+  - create_user  : crea un usuario nuevo (solo técnicos) → devuelve user_id
+  - update_user  : activa/desactiva un usuario (solo técnicos)
 
-Formato de mensaje entrante (payload JSON):
-  login  → {"op": "login",  "email": "x@x.com", "password": "clave"}
-  verify → {"op": "verify", "token": "eyJ..."}
+Formato de mensajes entrantes:
+  login       → {"op": "login",       "email": "x@x.com", "password": "clave"}
+  verify      → {"op": "verify",      "token": "eyJ..."}
+  create_user → {"op": "create_user", "token": "eyJ...(técnico)",
+                  "email": "nuevo@scg.cl", "password": "clave",
+                  "nombre": "Juan Pérez", "rol": "operario|contador|tecnico"}
+  update_user → {"op": "update_user", "token": "eyJ...(técnico)",
+                  "user_id": "uuid", "activo": true|false}
 
-Formato de respuesta JSON:
-  éxito  → {"status": "ok",    "token": "eyJ...", "rol": "operario", "user_id": "uuid"}
-  error  → {"status": "error", "mensaje": "Descripción del error"}
+Formato de respuesta:
+  éxito  → {"status": "ok", ...campos según operación}
+  error  → {"status": "error", "mensaje": "Descripción"}
 """
 
 import json
@@ -20,22 +27,42 @@ from supabase import create_client, Client
 from soa_lib import connect_to_bus, send_message, receive_message
 
 # ── Configuración ──────────────────────────────────────────────────────────────
-SERVICE_NAME  = "sauth"          # SIEMPRE 5 caracteres
+SERVICE_NAME  = "sauth"                   # SIEMPRE 5 caracteres
 SUPABASE_URL  = "TU_SUPABASE_URL_AQUI"   # ej: https://xxxx.supabase.co
-SUPABASE_KEY  = "TU_SUPABASE_ANON_KEY"  # clave anon o service_role
+SUPABASE_KEY  = "TU_SUPABASE_SERVICE_KEY" # Debe ser service_role (no anon) para crear usuarios
 
 
-# ── Lógica de negocio ──────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def get_supabase() -> Client:
-    """Crea y devuelve el cliente de Supabase."""
+    """Crea y devuelve el cliente de Supabase con clave service_role."""
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+def _obtener_rol_por_token(sb: Client, token: str) -> tuple[str | None, str | None]:
+    """
+    Dado un JWT, devuelve (user_id, rol).
+    Si el token es inválido lanza excepción (el llamador la captura).
+    """
+    resp    = sb.auth.get_user(token)
+    user_id = resp.user.id
+    perfil  = (
+        sb.table("profiles")
+          .select("rol")
+          .eq("id", user_id)
+          .single()
+          .execute()
+    )
+    rol = perfil.data.get("rol", "desconocido")
+    return user_id, rol
+
+
+# ── Operaciones ────────────────────────────────────────────────────────────────
+
 def op_login(payload: dict) -> dict:
     """
-    Autentica al usuario con Supabase Auth y devuelve token + rol.
-    El rol se obtiene de la tabla 'profiles' (que ya tienes en Supabase).
+    Autentica al usuario con Supabase Auth.
+    Solo permite el ingreso si el perfil está activo.
     """
     email    = payload.get("email", "").strip()
     password = payload.get("password", "")
@@ -47,38 +74,43 @@ def op_login(payload: dict) -> dict:
         sb = get_supabase()
 
         # 1. Autenticar contra Supabase Auth
-        resp = sb.auth.sign_in_with_password({"email": email, "password": password})
-
+        resp    = sb.auth.sign_in_with_password({"email": email, "password": password})
         token   = resp.session.access_token
         user_id = resp.user.id
 
-        # 2. Obtener el rol desde la tabla profiles
+        # 2. Obtener perfil: rol y estado activo
         perfil = (
             sb.table("profiles")
-              .select("rol")
+              .select("rol, activo")
               .eq("id", user_id)
               .single()
               .execute()
         )
-        rol = perfil.data.get("rol", "desconocido")
+        data = perfil.data
+
+        # 3. Verificar que el usuario esté habilitado
+        if not data.get("activo", False):
+            # Cerramos la sesión recién creada para no dejar tokens huérfanos
+            sb.auth.sign_out()
+            return {"status": "error", "mensaje": "Usuario deshabilitado. Contacte al técnico."}
 
         return {
             "status":  "ok",
             "token":   token,
             "user_id": user_id,
             "email":   email,
-            "rol":     rol,
+            "rol":     data.get("rol", "desconocido"),
         }
 
     except Exception as e:
-        # Supabase lanza excepción si las credenciales son incorrectas
         return {"status": "error", "mensaje": f"Credenciales inválidas: {str(e)}"}
 
 
 def op_verify(payload: dict) -> dict:
     """
-    Verifica que un JWT siga siendo válido y devuelve el user_id y rol.
-    Útil para que otros servicios validen tokens sin contactar Supabase ellos mismos.
+    Verifica que un JWT siga siendo válido.
+    Devuelve user_id y rol. Útil para que otros servicios validen tokens
+    sin necesidad de contactar Supabase directamente.
     """
     token = payload.get("token", "")
 
@@ -87,20 +119,7 @@ def op_verify(payload: dict) -> dict:
 
     try:
         sb = get_supabase()
-
-        # Obtener el usuario a partir del token
-        resp = sb.auth.get_user(token)
-        user_id = resp.user.id
-
-        # Obtener rol
-        perfil = (
-            sb.table("profiles")
-              .select("rol")
-              .eq("id", user_id)
-              .single()
-              .execute()
-        )
-        rol = perfil.data.get("rol", "desconocido")
+        user_id, rol = _obtener_rol_por_token(sb, token)
 
         return {
             "status":  "ok",
@@ -112,12 +131,133 @@ def op_verify(payload: dict) -> dict:
         return {"status": "error", "mensaje": f"Token inválido o expirado: {str(e)}"}
 
 
+def op_create_user(payload: dict) -> dict:
+    """
+    Crea un usuario nuevo en Supabase Auth + inserta su perfil.
+    Solo los técnicos pueden hacer esto (el firmante del token debe tener rol 'tecnico').
+
+    Campos requeridos en el payload:
+      token    : JWT del técnico que hace la petición
+      email    : email del nuevo usuario
+      password : contraseña del nuevo usuario
+      nombre   : nombre completo
+      rol      : "operario" | "contador" | "tecnico"
+    """
+    token    = payload.get("token", "")
+    email    = payload.get("email", "").strip()
+    password = payload.get("password", "")
+    nombre   = payload.get("nombre", "").strip()
+    rol_nuevo = payload.get("rol", "").strip()
+
+    # Validaciones básicas
+    if not all([token, email, password, nombre, rol_nuevo]):
+        return {"status": "error",
+                "mensaje": "token, email, password, nombre y rol son obligatorios"}
+
+    roles_validos = {"operario", "contador", "tecnico"}
+    if rol_nuevo not in roles_validos:
+        return {"status": "error",
+                "mensaje": f"rol inválido. Valores posibles: {sorted(roles_validos)}"}
+
+    try:
+        sb = get_supabase()
+
+        # 1. Verificar que el solicitante sea técnico
+        _, rol_solicitante = _obtener_rol_por_token(sb, token)
+        if rol_solicitante != "tecnico":
+            return {"status": "error",
+                    "mensaje": "Solo un técnico puede crear usuarios"}
+
+        # 2. Crear el usuario en Supabase Auth (con service_role)
+        #    email_confirm=True lo crea ya verificado, sin necesitar correo
+        resp_auth = sb.auth.admin.create_user({
+            "email":            email,
+            "password":         password,
+            "email_confirm":    True,
+        })
+        nuevo_user_id = resp_auth.user.id
+
+        # 3. Insertar el perfil en la tabla profiles
+        sb.table("profiles").insert({
+            "id":     nuevo_user_id,
+            "nombre": nombre,
+            "email":  email,
+            "rol":    rol_nuevo,
+            "activo": True,
+        }).execute()
+
+        return {
+            "status":  "ok",
+            "user_id": nuevo_user_id,
+            "email":   email,
+            "rol":     rol_nuevo,
+        }
+
+    except Exception as e:
+        return {"status": "error", "mensaje": f"Error al crear usuario: {str(e)}"}
+
+
+def op_update_user(payload: dict) -> dict:
+    """
+    Activa o desactiva un usuario (campo 'activo' en profiles).
+    Solo los técnicos pueden hacer esto.
+
+    Campos requeridos:
+      token   : JWT del técnico
+      user_id : UUID del usuario a modificar
+      activo  : true | false
+    """
+    token   = payload.get("token", "")
+    user_id = payload.get("user_id", "")
+    activo  = payload.get("activo")
+
+    if not token or not user_id or activo is None:
+        return {"status": "error",
+                "mensaje": "token, user_id y activo son obligatorios"}
+
+    if not isinstance(activo, bool):
+        return {"status": "error", "mensaje": "activo debe ser true o false"}
+
+    try:
+        sb = get_supabase()
+
+        # 1. Verificar que el solicitante sea técnico
+        _, rol_solicitante = _obtener_rol_por_token(sb, token)
+        if rol_solicitante != "tecnico":
+            return {"status": "error",
+                    "mensaje": "Solo un técnico puede modificar usuarios"}
+
+        # 2. Actualizar el campo activo en profiles
+        resultado = (
+            sb.table("profiles")
+              .update({"activo": activo})
+              .eq("id", user_id)
+              .execute()
+        )
+
+        if not resultado.data:
+            return {"status": "error",
+                    "mensaje": f"No se encontró el usuario con id '{user_id}'"}
+
+        return {
+            "status":  "ok",
+            "user_id": user_id,
+            "activo":  activo,
+        }
+
+    except Exception as e:
+        return {"status": "error", "mensaje": f"Error al actualizar usuario: {str(e)}"}
+
+
 # ── Dispatcher ─────────────────────────────────────────────────────────────────
 
 OPERACIONES = {
-    "login":  op_login,
-    "verify": op_verify,
+    "login":       op_login,
+    "verify":      op_verify,
+    "create_user": op_create_user,
+    "update_user": op_update_user,
 }
+
 
 def procesar_mensaje(raw_payload: str) -> dict:
     """
@@ -131,8 +271,9 @@ def procesar_mensaje(raw_payload: str) -> dict:
 
     op = payload.get("op")
     if op not in OPERACIONES:
-        ops_validas = list(OPERACIONES.keys())
-        return {"status": "error", "mensaje": f"Operación '{op}' desconocida. Válidas: {ops_validas}"}
+        ops_validas = sorted(OPERACIONES.keys())
+        return {"status": "error",
+                "mensaje": f"Operación '{op}' desconocida. Válidas: {ops_validas}"}
 
     return OPERACIONES[op](payload)
 
@@ -158,12 +299,12 @@ def main():
                 print("[sauth] Bus cerró la conexión.")
                 break
 
-            # Los primeros 5 bytes son el nombre del servicio (lo ignoramos aquí)
+            # Los primeros 5 bytes son el nombre del servicio remitente (lo ignoramos)
             raw_payload = data[5:].decode("utf-8")
             print(f"[sauth] Mensaje recibido: {raw_payload}")
 
-            respuesta = procesar_mensaje(raw_payload)
-            respuesta_str = json.dumps(respuesta)
+            respuesta     = procesar_mensaje(raw_payload)
+            respuesta_str = json.dumps(respuesta, ensure_ascii=False)
 
             send_message(sock, SERVICE_NAME, respuesta_str)
             print(f"[sauth] Respuesta enviada: {respuesta_str}\n")
