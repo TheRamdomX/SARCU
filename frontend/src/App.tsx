@@ -3,6 +3,7 @@ import OperarioDashboard from './Operario';
 import AdminView from './AdminView';
 import { LoginForm } from './LoginForm';
 import { loginSOA } from './lib/api';
+import TecnicoView from './TecnicoView';
 
 function App() {
   // Inicializamos el estado leyendo directamente del almacenamiento local
@@ -57,6 +58,10 @@ function App() {
 
   if (esAdministrador && vistaActiva === 'admin') {
     return <AdminView onSwitchView={() => setVistaActiva('operario')} />;
+  }
+
+  if (rol === 'tecnico') {
+    return <TecnicoView />;
   }
 
   if (esAdministrador && vistaActiva === 'operario') {
