@@ -220,13 +220,42 @@ def url_comprobante(gasto_id: str, token: str):
 
 # ── Reportes (/reportes) ──────────────────────────────────────────────────────
 
-@app.get("/reportes/consolidado")
-def reporte_consolidado(token: str, fecha_desde: Optional[str] = None, fecha_hasta: Optional[str] = None):
+@app.get("/reportes/resumen")
+def reporte_resumen(token: str):
+    # Llama a la operación 'resumen' que ya validamos
+    result = call_service("srept", {"op": "resumen", "token": token})
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("mensaje"))
+    return result
+
+@app.get("/reportes/listar")
+def reporte_listar(
+    token: str, 
+    estado: str = "all", 
+    fecha_filtro: str = "all", 
+    monto_filtro: str = "all", 
+    search: str = ""
+):
+    # Llama a la operación 'listar_gastos'
     result = call_service("srept", {
-        "op":          "consolidado",
-        "token":       token,
-        "fecha_desde": fecha_desde,
-        "fecha_hasta": fecha_hasta,
+        "op": "listar_gastos",
+        "token": token,
+        "estado": estado,
+        "fecha_filtro": fecha_filtro,
+        "monto_filtro": monto_filtro,
+        "search": search
+    })
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("mensaje"))
+    return result
+
+@app.post("/reportes/pdf")
+def reporte_pdf(body: dict):
+    # Llama a 'reporte_pdf' (espera gasto_ids como lista en el body)
+    result = call_service("srept", {
+        "op": "reporte_pdf",
+        "token": body.get("token"),
+        "gasto_ids": body.get("gasto_ids", [])
     })
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("mensaje"))

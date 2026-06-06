@@ -3,9 +3,9 @@ import { Plus, Wallet, TrendingDown, History, ArrowLeft } from 'lucide-react';
 import { ExpenseHistory } from "./Expense_history";
 import { ExpenseForm } from './expense-form';
 import { ExpenseDetailModal } from './expense-detail-modal';
-import { supabase } from './lib/supabase';
 import { Button } from './button';
 
+const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8000';
 
 export interface Expense {
     id: string;
@@ -14,15 +14,17 @@ export interface Expense {
     photo: string;
     date: Date;
 }
+
 interface OperarioProps {
     onReturnToAdmin?: () => void;
 }
+
 export default function Operario({ onReturnToAdmin }: OperarioProps) {
     const [usuario, setUsuario] = useState({
         id: "",
-        nombre: "Cargando...",
+        nombre: "Trabajador", // Usamos un nombre genérico por ahora
         apellido: "",
-        rol: "",
+        rol: "operario",
         saldo_disponible: 0
     });
     const [view, setView] = useState<'home' | 'form'>('home');
@@ -31,101 +33,79 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
     const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
     const [modalOpen, setModalOpen] = useState(false);
 
+    // 1. Efecto que carga los datos desde el GATEWAY SOA
     useEffect(() => {
-        async function obtenerDatos() {
-            try {
-
-                const { data: { user } } = await supabase.auth.getUser();
-
-                if (user) {
-
-                    const { data: perfilData, error: perfilError } = await supabase
-                        .from('perfiles')
-                        .select('nombre, apellido, rol, saldo_disponible')
-                        .eq('id', user.id)
-                        .single();
-
-                    if (perfilError) throw perfilError;
-
-                    if (perfilData) {
-                        setUsuario({
-                            id: user.id,
-                            nombre: perfilData.nombre || "Operario",
-                            apellido: perfilData.apellido || "",
-                            rol: perfilData.rol || "operario",
-                            saldo_disponible: perfilData.saldo_disponible || 0
-                        });
-                    }
-
-
-                    const { data: gastosData, error: gastosError } = await supabase
-                        .from('gastos')
-                        .select('*')
-                        .eq('operario_id', user.id)
-                        .order('fecha_creacion', { ascending: false }); // Los más nuevos primero
-
-                    if (gastosError) throw gastosError;
-
-                    if (gastosData) {
-
-                        const historialFormateado = gastosData.map(g => ({
-                            id: g.id,
-                            concept: g.concepto,
-                            amount: g.monto,
-                            photo: g.foto_url,
-                            date: new Date(g.fecha_creacion)
-                        }));
-                        setExpenses(historialFormateado);
-                    }
-                }
-            } catch (err) {
-                console.error("Error al cargar los datos:", err);
-            } finally {
-                setCargando(false);
-            }
-        }
-
-        obtenerDatos();
+        obtenerDatosSOA();
     }, []);
 
+    async function obtenerDatosSOA() {
+        try {
+            const token = localStorage.getItem('scg_token');
+            const rol = localStorage.getItem('scg_rol') || 'operario';
+            if (!token) return;
+
+            // Consultamos al microservicio ssald
+            const resSaldo = await fetch(`${GATEWAY_URL}/saldos/mio?token=${token}`);
+            const dataSaldo = await resSaldo.json();
+
+            if (dataSaldo.status === 'ok') {
+                setUsuario(prev => ({
+                    ...prev,
+                    rol: rol,
+                    saldo_disponible: dataSaldo.saldo_disponible || 0
+                }));
+            }
+
+            // Consultamos al microservicio sgast
+            const resGastos = await fetch(`${GATEWAY_URL}/gastos?token=${token}`);
+            const dataGastos = await resGastos.json();
+
+            if (dataGastos.status === 'ok' && dataGastos.gastos) {
+                const historialFormateado = dataGastos.gastos.map((g: any) => ({
+                    id: g.id,
+                    concept: g.concepto || g.descripcion, 
+                    amount: g.monto,
+                    photo: g.comprobante_url || g.foto_url || "",
+                    date: new Date(g.fecha || g.created_at)
+                }));
+                setExpenses(historialFormateado);
+            }
+        } catch (err) {
+            console.error("Error al cargar los datos vía SOA:", err);
+        } finally {
+            setCargando(false);
+        }
+    }
+
+    // 2. Función de subir gasto apuntando al GATEWAY SOA
     const handleAddExpense = async (nuevoGasto: { concept: string; amount: number; photo: string; date: Date }) => {
         try {
-            const nuevoSaldo = usuario.saldo_disponible - nuevoGasto.amount;
-            const { data, error } = await supabase
-                .from('gastos')
-                .insert([
-                    {
-                        operario_id: usuario.id,
-                        monto: nuevoGasto.amount,
-                        concepto: nuevoGasto.concept,
-                        foto_url: nuevoGasto.photo,
-                    }
-                ])
-                .select()
-                .single();
-            if (error) throw error;
-            const { error: updateError } = await supabase
-                .from('perfiles')
-                .update({ saldo_disponible: nuevoSaldo })
-                .eq('id', usuario.id);
-            if (updateError) throw updateError;
+            const token = localStorage.getItem('scg_token');
+            
+            const res = await fetch(`${GATEWAY_URL}/gastos`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    token: token,
+                    monto: nuevoGasto.amount,
+                    concepto: nuevoGasto.concept,
+                    fecha: nuevoGasto.date.toISOString().split('T')[0], // Enviar solo YYYY-MM-DD
+                    comprobanteUrl: nuevoGasto.photo
+                })
+            });
 
-            const gastoConfirmado: Expense = {
-                id: data.id,
-                concept: data.concepto,
-                amount: data.monto,
-                photo: data.foto_url,
-                date: new Date(data.fecha_creacion)
-            };
+            const data = await res.json();
+            if (data.status !== 'ok') {
+                throw new Error(data.mensaje);
+            }
 
-            setUsuario(prevUsuario => ({ ...prevUsuario, saldo_disponible: nuevoSaldo }));
-
-
-            setExpenses([gastoConfirmado, ...expenses]);
+            // Si es exitoso, recargamos los datos para ver el nuevo saldo
+            await obtenerDatosSOA();
             setView('home');
-        } catch (error) {
+
+        } catch (error: any) {
             console.error("Error procesando la transacción:", error);
-            alert("Hubo un error al registrar el gasto y actualizar el saldo. Revisa la conexión.");
+            alert("Hubo un error al registrar el gasto: " + error.message);
         }
     };
 
@@ -137,7 +117,7 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
     if (cargando) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <p className="text-cyan-600 font-medium">Cargando tu información...</p>
+                <p className="text-cyan-600 font-medium">Cargando tu información del servidor...</p>
             </div>
         );
     }
@@ -154,7 +134,6 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
             ) : (
                 <div className="min-h-screen bg-gradient-to-b from-cyan-50 to-white">
                     <div className="bg-gradient-to-r from-cyan-600 to-cyan-500 text-white p-6 pb-8 rounded-b-3xl shadow-lg">
-                        {/* 1. BOTÓN DE VOLVER (Solo visible para el Admin) */}
                         {onReturnToAdmin && (
                             <div className="flex justify-start mb-4">
                                 <Button
@@ -168,7 +147,6 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
                                 </Button>
                             </div>
                         )}
-                        {/* 2. LOGO Y NOMBRE ALINEADOS */}
                         <div className="mb-6 flex items-center gap-4">
                             <img
                                 src="/c-mvt_logo.png"
@@ -178,7 +156,7 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
                             <div>
                                 <p className="text-sm font-light tracking-wide text-cyan-100 text-left">Bienvenido</p>
                                 <h1 className="text-2xl font-semibold mt-0.5 text-left leading-tight">
-                                    {usuario.nombre} {usuario.apellido}
+                                    {usuario.nombre}
                                 </h1>
                             </div>
                         </div>
@@ -188,10 +166,6 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
                                 <span className="text-sm text-cyan-100">Saldo Disponible</span>
                             </div>
                             <p className="text-4xl mb-4 text-left">${usuario.saldo_disponible.toLocaleString('es-CL')}</p>
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-cyan-100">Presupuesto inicial:</span>
-                                <span>${(100000).toLocaleString('es-CL')}</span>
-                            </div>
                         </div>
                     </div>
                     <div className="p-4 pb-24">

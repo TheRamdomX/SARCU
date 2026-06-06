@@ -1,79 +1,65 @@
 import { useState, useEffect } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from './lib/supabase';
 import OperarioDashboard from './Operario';
 import AdminView from './AdminView';
 import { LoginForm } from './LoginForm';
+import { loginSOA } from './lib/api';
 
 function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [rol, setRol] = useState<string | null>(null);
-  const [cargando, setCargando] = useState(true);
+  // Inicializamos el estado leyendo directamente del almacenamiento local
+  const [token, setToken] = useState<string | null>(localStorage.getItem('scg_token'));
+  const [rol, setRol] = useState<string | null>(localStorage.getItem('scg_rol'));
+  const [cargando, setCargando] = useState(false);
   const [vistaActiva, setVistaActiva] = useState<'admin' | 'operario'>('admin');
 
   useEffect(() => {
-    const fetchRol = async (userId: string) => {
-      const { data, error } = await supabase
-        .from('perfiles')
-        .select('rol')
-        .eq('id', userId)
-        .single();
-
-      if (!error && data) {
-        setRol(data.rol);
-        setVistaActiva(data.rol === 'admin' ? 'admin' : 'operario');
-      }
-      setCargando(false);
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) fetchRol(session.user.id);
-      else setCargando(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        setCargando(true);
-        fetchRol(session.user.id);
-      } else {
-        setRol(null);
-        setCargando(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+    if (rol) {
+      // Si el rol es admin o contador, permitimos el acceso al panel administrativo
+      setVistaActiva(rol === 'admin' || rol === 'contador' ? 'admin' : 'operario');
+    }
+  }, [rol]);
 
   const handleLogin = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
-    });
-
-    if (error) {
-      alert('Error al iniciar sesión: ' + error.message);
+    setCargando(true);
+    try {
+      const data = await loginSOA(email, password);
+      
+      if (data.token) {
+        const userRole = data.rol || 'operario';
+        
+        // Guardamos los datos de la sesión SOA en el navegador
+        localStorage.setItem('scg_token', data.token);
+        localStorage.setItem('scg_rol', userRole);
+        localStorage.setItem('scg_user_id', data.user_id);
+        
+        setToken(data.token);
+        setRol(userRole);
+      }
+    } catch (error: any) {
+      alert('Error al iniciar sesión mediante SOA: ' + error.message);
+    } finally {
+      setCargando(false);
     }
   };
 
   if (cargando) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <p className="text-cyan-600 font-medium">Cargando plataforma...</p>
+        <p className="text-cyan-600 font-medium">Autenticando en el sistema de servicios...</p>
       </div>
     );
   }
 
-  if (!session) {
+  if (!token) {
     return <LoginForm onLogin={handleLogin} />;
   }
 
-  if (rol === 'admin' && vistaActiva === 'admin') {
+  const esAdministrador = rol === 'admin' || rol === 'contador';
+
+  if (esAdministrador && vistaActiva === 'admin') {
     return <AdminView onSwitchView={() => setVistaActiva('operario')} />;
   }
 
-  if (rol === 'admin' && vistaActiva === 'operario') {
+  if (esAdministrador && vistaActiva === 'operario') {
     return <OperarioDashboard onReturnToAdmin={() => setVistaActiva('admin')} />;
   }
 

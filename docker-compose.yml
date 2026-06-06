@@ -127,6 +127,7 @@ services:
     restart: on-failure:5
 
   # ── Frontend React + Vite ─────────────────────────────────────────────────
+# ── Frontend React + Vite ─────────────────────────────────────────────────
   frontend:
     build: ./frontend
     container_name: scg-frontend
@@ -136,8 +137,9 @@ services:
       - gateway
     environment:
       VITE_GATEWAY_URL: http://localhost:8000
+      VITE_SUPABASE_URL: ${SUPABASE_URL}
+      VITE_SUPABASE_ANON_KEY: ${SUPABASE_KEY}
     volumes:
-      # Hot reload: monta el código fuente del host en el contenedor
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
     networks:
