@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Users, ShieldAlert, UserPlus, Database } from 'lucide-react';
-import CrearUsuario from './CrearUsuario'; // Mantenemos tu componente
+import { ShieldAlert, Database, UserPlus } from 'lucide-react';
+import CrearUsuario from './CrearUsuario';
+import DirectorioUsuarios from './DirectorioUsuarios';
 
 export default function TecnicoView() {
     const [usuario, setUsuario] = useState({
@@ -9,7 +10,7 @@ export default function TecnicoView() {
     });
 
     useEffect(() => {
-        // Aquí puedes leer el nombre real si lo guardas en el login
+        // Opcional: Leer el nombre real del técnico si lo tienes guardado
         // const nombreGuardado = localStorage.getItem('scg_nombre') || 'Técnico de Soporte';
         // setUsuario(prev => ({ ...prev, nombre: nombreGuardado }));
     }, []);
@@ -43,7 +44,7 @@ export default function TecnicoView() {
                             </div>
                         </div>
 
-                        {/* Derecha: Botón Cerrar Sesión (Estilo unificado) */}
+                        {/* Derecha: Botón Cerrar Sesión */}
                         <div className="flex flex-col items-end gap-2">
                             <button 
                                 onClick={handleCerrarSesion}
@@ -68,29 +69,17 @@ export default function TecnicoView() {
             {/* CONTENIDO PRINCIPAL */}
             <div className="p-6 max-w-5xl mx-auto space-y-6 mt-2">
                 
-                {/* Contenedor estilizado para tu formulario de Crear Usuario */}
+                {/* Contenedor de Crear Usuario */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <div className="flex items-center gap-2 mb-4 pb-4 border-b border-gray-100">
                         <UserPlus className="h-5 w-5 text-cyan-600" />
                         <h2 className="text-lg font-semibold text-gray-800">Registrar Nuevo Personal</h2>
                     </div>
-                    {/* Aquí se inyecta tu componente tal cual lo creaste */}
                     <CrearUsuario />
                 </div>
 
-                {/* Directorio de Usuarios (Estructura de Tabla para más adelante) */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
-                        <Users className="h-5 w-5 text-gray-600" />
-                        <h3 className="font-semibold text-gray-700">Directorio de Usuarios Activos</h3>
-                    </div>
-                    
-                    <div className="p-12 text-center text-gray-500 flex flex-col items-center bg-white">
-                        <Users className="h-12 w-12 text-gray-300 mb-3" />
-                        <p className="font-medium text-gray-600">La tabla de usuarios se cargará aquí...</p>
-                        <p className="text-sm text-gray-400 mt-1">Pendiente: Conectar con el microservicio de perfiles</p>
-                    </div>
-                </div>
+                {/* Directorio de Usuarios (¡Ahora sí, el componente real!) */}
+                <DirectorioUsuarios />
 
             </div>
         </div>

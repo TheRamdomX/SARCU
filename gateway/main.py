@@ -154,6 +154,17 @@ def registro(req: RegistroRequest):
         raise HTTPException(status_code=400, detail=result.get("mensaje"))
     return result
 
+@app.get("/auth/usuarios")
+def listar_usuarios(token: str):
+    
+    result = call_service("sauth", {
+        "op": "list_users",
+        "token": token
+    })
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("mensaje"))
+    return result
+
 # ── Gastos (/gastos) ──────────────────────────────────────────────────────────
 
 class GastoRequest(BaseModel):
