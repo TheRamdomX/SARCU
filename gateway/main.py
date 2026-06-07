@@ -156,6 +156,52 @@ def listar_usuarios(token: str):
         raise HTTPException(status_code=400, detail=result.get("mensaje"))
     return result
 
+
+# ── Gestión de Usuarios (Técnico) ─────────────────────────────────────────────
+
+class ModificarUsuarioRequest(BaseModel):
+    token: str
+    rol: str
+    saldo_disponible: float
+
+@app.patch("/usuarios/{user_id}")
+def modificar_usuario(user_id: str, req: ModificarUsuarioRequest):
+    # 1. Mandamos a actualizar el rol al servicio de Autenticación/Usuarios
+    res_rol = call_service("sauth", {
+        "op": "update_user",
+        "token": req.token,
+        "user_id": user_id,
+        "rol": req.rol
+    })
+    if res_rol.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res_rol.get("mensaje"))
+
+    # 2. Mandamos a asignar el saldo inicial al servicio de Saldos
+    res_saldo = call_service("ssald", {
+        "op": "asignar_saldo", 
+        "token": req.token,
+        "user_id": user_id,
+        "saldo": req.saldo_disponible
+    })
+    if res_saldo.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res_saldo.get("mensaje"))
+
+    return {"status": "ok", "mensaje": "Usuario y saldo actualizados correctamente"}
+
+
+@app.delete("/usuarios/{user_id}")
+def eliminar_usuario(user_id: str, token: str):
+    # Mandamos la orden de eliminación lógica o física al servicio de usuarios
+    result = call_service("sauth", {
+        "op": "delete_user",
+        "token": token,
+        "user_id": user_id
+    })
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("mensaje"))
+    return result
+
+
 # ── Gastos (/gastos) ──────────────────────────────────────────────────────────
 
 class GastoRequest(BaseModel):
