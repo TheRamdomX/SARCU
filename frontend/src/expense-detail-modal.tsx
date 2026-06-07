@@ -7,7 +7,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from './dialog';
-import { downloadSingleExpensePDF } from './pdf-generator';
+
 
 const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8000';
 
@@ -44,14 +44,35 @@ export function ExpenseDetailModal({ expense, open, onClose }: ExpenseDetailModa
         }).format(date);
     };
 
-    const handleDownloadPDF = async () => {
-        const expenseWithDefaults = {
-            ...expense,
-            workerId: expense.workerId || '1',
-            workerName: expense.workerName || 'Trabajador',
-        };
-        await downloadSingleExpensePDF(expenseWithDefaults);
-    };
+const handleDownloadPDF = async () => {
+    try {
+        setIsProcessing(true);
+        const token = localStorage.getItem('scg_token');
+
+        // Llamamos al Gateway (que ruteará al microservicio srept)
+        const response = await fetch(`${GATEWAY_URL}/reportes/pdf`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                token: token,
+                gasto_ids: [expense.id] // srept espera una lista de IDs
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'ok' && data.pdf_url) {
+            // Si todo sale bien, abrimos la URL del PDF en una nueva pestaña
+            window.open(data.pdf_url, '_blank');
+        } else {
+            alert(`Error al generar el PDF: ${data.mensaje}`);
+        }
+    } catch (err) {
+        alert("Error de conexión al solicitar el reporte.");
+    } finally {
+        setIsProcessing(false);
+    }
+};
 
     const handleCambiarEstado = async (nuevoEstado: 'aprobado' | 'rechazado') => {
         try {

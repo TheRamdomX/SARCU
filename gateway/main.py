@@ -8,6 +8,8 @@ se traduce a un mensaje TCP al bus y la respuesta vuelve como JSON.
 import json
 import os
 import socket
+import random
+import string
 
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,20 +34,17 @@ app.add_middleware(
 
 def call_service(service_name: str, payload: dict) -> dict:
     """
-    Abre una conexión TCP al bus, se registra como 'gateway' (sinit),
+    Abre una conexión TCP al bus, se registra como un cliente aleatorio,
     envía el payload al servicio indicado y devuelve la respuesta.
-
-    El bus requiere que todo cliente se registre con 'sinit' antes de
-    poder enviar o recibir mensajes enrutados.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect((BUS_HOST, BUS_PORT))
 
-        # ── Paso 1: Registrarse en el bus con sinit ───────────────────────────
-        # El bus ignora cualquier mensaje de clientes no registrados.
-        my_name   = "gatew"                        # exactamente 5 bytes
-        reg_name  = my_name.encode()               # b"gatew"
+        # ── Paso 1: Registrarse en el bus con sinit (Nombre Aleatorio) ────────
+        # Generamos 5 letras al azar para evitar que peticiones concurrentes choquen
+        my_name   = "".join(random.choices(string.ascii_lowercase, k=5))
+        reg_name  = my_name.encode()               
         reg_content = b"sinit" + reg_name
         reg_msg   = str(len(reg_content)).zfill(5).encode() + reg_content
         sock.sendall(reg_msg)
@@ -61,14 +60,9 @@ def call_service(service_name: str, payload: dict) -> dict:
             if not chunk:
                 break
             ack_data += chunk
-        # ack_data = b"sinitOK" — ignoramos el contenido, solo verificamos llegada
 
         # ── Paso 2: Enviar el mensaje al servicio destino ─────────────────────
-        # Formato: [5-bytes-longitud][5-bytes-destino][payload-JSON]
-        # reply_to indica al servicio a qué nombre del bus debe responder.
-        # Sin este campo, los servicios responden a sí mismos y la respuesta
-        # nunca llega al gateway (se queda colgado infinitamente).
-        payload["reply_to"] = my_name          # "gatew"
+        payload["reply_to"] = my_name          
         payload_bytes = json.dumps(payload).encode("utf-8")
         content       = service_name.encode() + payload_bytes
         message       = str(len(content)).zfill(5).encode() + content
@@ -86,7 +80,6 @@ def call_service(service_name: str, payload: dict) -> dict:
                 break
             data += chunk
 
-        # data = [5-bytes-origen][payload-JSON]
         return json.loads(data[5:].decode("utf-8"))
 
     except ConnectionRefusedError:
@@ -139,7 +132,6 @@ class RegistroRequest(BaseModel):
     nombre: str
     rol: str
     
-
 @app.post("/auth/registro")
 def registro(req: RegistroRequest):
     result = call_service("sauth", {
@@ -156,7 +148,6 @@ def registro(req: RegistroRequest):
 
 @app.get("/auth/usuarios")
 def listar_usuarios(token: str):
-    
     result = call_service("sauth", {
         "op": "list_users",
         "token": token
@@ -254,7 +245,6 @@ def url_comprobante(gasto_id: str, token: str):
 
 @app.get("/reportes/resumen")
 def reporte_resumen(token: str):
-    # Llama a la operación 'resumen' que ya validamos
     result = call_service("srept", {"op": "resumen", "token": token})
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("mensaje"))
@@ -268,7 +258,6 @@ def reporte_listar(
     monto_filtro: str = "all", 
     search: str = ""
 ):
-    # Llama a la operación 'listar_gastos'
     result = call_service("srept", {
         "op": "listar_gastos",
         "token": token,
@@ -283,7 +272,6 @@ def reporte_listar(
 
 @app.post("/reportes/pdf")
 def reporte_pdf(body: dict):
-    # Llama a 'reporte_pdf' (espera gasto_ids como lista en el body)
     result = call_service("srept", {
         "op": "reporte_pdf",
         "token": body.get("token"),

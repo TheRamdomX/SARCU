@@ -51,12 +51,11 @@ def crear_gasto(payload: dict, user_id: str, rol: str) -> dict:
             return {"status": "error", "mensaje": "Faltan campos obligatorios (monto, concepto, fecha)."}
 
         nuevo = {
-            "operario_id": user_id,
-            "monto": float(monto),
-            "concepto": concepto,
-            "fecha_creacion": fecha,
-            "estado": "pendiente",
-            "foto_url": foto_url
+            "operario_id": user_id,                 
+            "monto": payload["monto"],             
+            "descripcion": payload["concepto"],     
+            "fecha": payload["fecha"],              
+            "comprobante_url": payload["comprobanteUrl"]
         }
 
         db = init_supabase()
@@ -83,7 +82,7 @@ def listar_gastos(payload: dict, user_id: str, rol: str) -> dict:
             query = query.eq("estado", estado)
 
         # Ordenar para que las más nuevas salgan primero en el frontend
-        query = query.order("fecha_creacion", desc=True)
+        query = query.order("created_at", desc=True)
         res = query.execute()
 
         return {"status": "ok", "gastos": res.data or []}
