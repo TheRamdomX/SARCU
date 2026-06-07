@@ -94,10 +94,10 @@ export default function DirectorioUsuarios() {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    token: token,
-                    rol: usuarioAEditar.rol,
-                    saldo_disponible: parseFloat(usuarioAEditar.saldo_disponible)
-                })
+    token: token,
+    rol: usuarioAEditar.rol,
+    saldo_disponible: parseInt(usuarioAEditar.saldo_disponible, 10) 
+})
             });
 
             const data = await res.json();

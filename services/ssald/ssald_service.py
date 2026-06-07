@@ -129,6 +129,26 @@ def cambiar_estado(user_id_contador: str, rol_contador: str, gasto_id: str, nuev
     except Exception as e:
         return {"status": "error", "mensaje": str(e)}
 
+def op_asignar_saldo(user_id_solicitante: str, rol_solicitante: str, user_id_operario: str, saldo: float) -> dict:
+    try:
+        if rol_solicitante != "tecnico":
+            return {"status": "error", "mensaje": "Solo un TÉCNICO puede asignar saldo."}
+            
+        # FORZAMOS la conversión a entero para evitar el error de bigint
+        saldo_entero = int(saldo) 
+            
+        db = init_supabase()
+        # Actualizamos el saldo
+        res = db.table("profiles").update({"saldo_disponible": saldo_entero}).eq("id", user_id_operario).execute()
+        
+        if res.data:
+            return {"status": "ok", "mensaje": "Saldo actualizado correctamente."}
+        else:
+            return {"status": "error", "mensaje": "No se pudo actualizar el saldo."}
+    except Exception as e:
+        return {"status": "error", "mensaje": str(e)}
+
+
 def procesar_mensaje(raw_payload: str) -> dict:
     try:
         payload = json.loads(raw_payload)
@@ -145,9 +165,12 @@ def procesar_mensaje(raw_payload: str) -> dict:
             return obtener_saldo_operario(usuario_verificado["user_id"], usuario_verificado["rol"], payload.get("user_id"))
         elif op == "cambiar_estado":
             return cambiar_estado(usuario_verificado["user_id"], usuario_verificado["rol"], payload.get("gasto_id"), payload.get("estado"), payload.get("motivo", ""))
+       
+        elif op == "asignar_saldo":
+            return op_asignar_saldo(usuario_verificado["user_id"], usuario_verificado["rol"], payload.get("user_id"), float(payload.get("saldo", 0)))
+        
         else:
             return {"status": "error", "mensaje": f"Operación '{op}' no implementada"}
-            
     except Exception as e:
         return {"status": "error", "mensaje": str(e)}
 
