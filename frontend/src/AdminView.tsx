@@ -3,6 +3,7 @@ import { LayoutDashboard, Receipt, TrendingDown, Calendar as CalendarIcon, Searc
 import { Button } from './button';
 import { AdminCalendar } from './admin-calendar';
 import { ExpenseDetailModal } from './expense-detail-modal';
+import { safeImageSrc } from './lib/supabase';
 import { Input } from './input';
 import {
     Select,
@@ -69,7 +70,9 @@ export default function AdminView({ onSwitchView }: AdminViewProps) {
                 const token = localStorage.getItem('scg_token');
                 if (!token) return;
 
-                const response = await fetch(`${GATEWAY_URL}/gastos?token=${token}`);
+                const response = await fetch(`${GATEWAY_URL}/gastos`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
                 const data = await response.json();
 
                 if (data.status === 'ok' && data.gastos) {
@@ -502,7 +505,7 @@ const handleCerrarSesion = () => {
                                                 >
                                                     <TableCell onClick={(e) => e.stopPropagation()}>
                                                         <img
-                                                            src={expense.photo}
+                                                            src={safeImageSrc(expense.photo)}
                                                             alt="Boleta"
                                                             className="w-12 h-12 object-cover rounded border border-gray-100 shadow-sm"
                                                         />

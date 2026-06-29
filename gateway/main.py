@@ -11,23 +11,45 @@ import socket
 import random
 import string
 
-from fastapi import FastAPI, HTTPException, Header
+import time
+from collections import defaultdict
+
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
 BUS_HOST = os.getenv("BUS_HOST", "localhost")
 BUS_PORT = int(os.getenv("BUS_PORT", "5000"))
+BUS_SECRET = os.getenv("BUS_SECRET", "")
+
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 
 app = FastAPI(title="SCG Gateway", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # En producción: restringir al dominio del frontend
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Rate limiting para login ────────────────────────────────────────────────
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+LOGIN_RATE_LIMIT = 5
+LOGIN_RATE_WINDOW = 60
+
+
+def _check_login_rate_limit(client_ip: str) -> bool:
+    now = time.time()
+    attempts = _login_attempts[client_ip]
+    _login_attempts[client_ip] = [t for t in attempts if now - t < LOGIN_RATE_WINDOW]
+    if len(_login_attempts[client_ip]) >= LOGIN_RATE_LIMIT:
+        return False
+    _login_attempts[client_ip].append(now)
+    return True
 
 
 # ── Función central: TCP call al bus ──────────────────────────────────────────
@@ -44,7 +66,8 @@ def call_service(service_name: str, payload: dict) -> dict:
         # ── Paso 1: Registrarse en el bus con sinit (Nombre Aleatorio) ────────
         # Generamos 5 letras al azar para evitar que peticiones concurrentes choquen
         my_name   = "".join(random.choices(string.ascii_lowercase, k=5))
-        reg_name  = my_name.encode()               
+        # El nombre (para enrutar la respuesta) se autentica con el secreto del bus.
+        reg_name  = f"{my_name}|{BUS_SECRET}".encode()
         reg_content = b"sinit" + reg_name
         reg_msg   = str(len(reg_content)).zfill(5).encode() + reg_content
         sock.sendall(reg_msg)
@@ -83,11 +106,17 @@ def call_service(service_name: str, payload: dict) -> dict:
         return json.loads(data[5:].decode("utf-8"))
 
     except ConnectionRefusedError:
-        raise HTTPException(status_code=503, detail="Bus SOA no disponible.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="Servicio no disponible.")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error interno del servidor.")
     finally:
         sock.close()
+
+
+def _extract_token(authorization: Optional[str]) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token no proporcionado. Use Authorization: Bearer <token>")
+    return authorization.split(" ", 1)[1]
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -104,7 +133,10 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_login_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Demasiados intentos de login. Intenta de nuevo en un minuto.")
     result = call_service("sauth", {
         "op":       "login",
         "email":    req.email,
@@ -117,9 +149,7 @@ def login(req: LoginRequest):
 
 @app.get("/auth/verify")
 def verify(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token no proporcionado.")
-    token = authorization.split(" ", 1)[1]
+    token = _extract_token(authorization)
     result = call_service("sauth", {"op": "verify", "token": token})
     if result.get("status") == "error":
         raise HTTPException(status_code=401, detail=result.get("mensaje"))
@@ -147,7 +177,8 @@ def registro(req: RegistroRequest):
     return result
 
 @app.get("/auth/usuarios")
-def listar_usuarios(token: str):
+def listar_usuarios(authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("sauth", {
         "op": "list_users",
         "token": token
@@ -190,8 +221,8 @@ def modificar_usuario(user_id: str, req: ModificarUsuarioRequest):
 
 
 @app.delete("/usuarios/{user_id}")
-def eliminar_usuario(user_id: str, token: str):
-    # Mandamos la orden de eliminación lógica o física al servicio de usuarios
+def eliminar_usuario(user_id: str, authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("sauth", {
         "op": "delete_user",
         "token": token,
@@ -227,7 +258,8 @@ def crear_gasto(req: GastoRequest):
 
 
 @app.get("/gastos")
-def listar_gastos(token: str, estado: Optional[str] = None):
+def listar_gastos(estado: Optional[str] = None, authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("sgast", {
         "op":     "listar",
         "token":  token,
@@ -254,7 +286,8 @@ def cambiar_estado(gasto_id: str, body: dict):
 # ── Saldos (/saldos) ──────────────────────────────────────────────────────────
 
 @app.get("/saldos/mio")
-def mi_saldo(token: str):
+def mi_saldo(authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("ssald", {"op": "mi_saldo", "token": token})
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("mensaje"))
@@ -262,7 +295,8 @@ def mi_saldo(token: str):
 
 
 @app.get("/saldos/{user_id}")
-def saldo_operario(user_id: str, token: str):
+def saldo_operario(user_id: str, authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("ssald", {
         "op":      "saldo_operario",
         "token":   token,
@@ -276,7 +310,8 @@ def saldo_operario(user_id: str, token: str):
 # ── Comprobantes (/comprobantes) ──────────────────────────────────────────────
 
 @app.get("/comprobantes/{gasto_id}")
-def url_comprobante(gasto_id: str, token: str):
+def url_comprobante(gasto_id: str, authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("scomp", {
         "op":       "obtener_url",
         "token":    token,
@@ -290,7 +325,8 @@ def url_comprobante(gasto_id: str, token: str):
 # ── Reportes (/reportes) ──────────────────────────────────────────────────────
 
 @app.get("/reportes/resumen")
-def reporte_resumen(token: str):
+def reporte_resumen(authorization: Optional[str] = Header(None)):
+    token = _extract_token(authorization)
     result = call_service("srept", {"op": "resumen", "token": token})
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("mensaje"))
@@ -298,12 +334,13 @@ def reporte_resumen(token: str):
 
 @app.get("/reportes/listar")
 def reporte_listar(
-    token: str, 
-    estado: str = "all", 
-    fecha_filtro: str = "all", 
-    monto_filtro: str = "all", 
-    search: str = ""
+    estado: str = "all",
+    fecha_filtro: str = "all",
+    monto_filtro: str = "all",
+    search: str = "",
+    authorization: Optional[str] = Header(None),
 ):
+    token = _extract_token(authorization)
     result = call_service("srept", {
         "op": "listar_gastos",
         "token": token,

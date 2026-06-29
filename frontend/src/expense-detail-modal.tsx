@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Calendar, Receipt, Download, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from './button';
+import { safeImageSrc } from './lib/supabase';
 import {
     Dialog,
     DialogContent,
@@ -63,7 +64,7 @@ const handleDownloadPDF = async () => {
 
         if (data.status === 'ok' && data.pdf_url) {
             // Si todo sale bien, abrimos la URL del PDF en una nueva pestaña
-            window.open(data.pdf_url, '_blank');
+            window.open(data.pdf_url, '_blank', 'noopener,noreferrer');
         } else {
             alert(`Error al generar el PDF: ${data.mensaje}`);
         }
@@ -118,7 +119,7 @@ const handleDownloadPDF = async () => {
                     {/* Photo */}
                     <div>
                         <img
-                            src={expense.photo}
+                            src={safeImageSrc(expense.photo)}
                             alt="Boleta"
                             className="w-full h-64 object-cover rounded-lg"
                         />
@@ -150,8 +151,8 @@ const handleDownloadPDF = async () => {
                         </div>
                     </div>
 
-                    {/* Botones de Auditoría si el gasto está pendiente */}
-                    {expense.estado === 'pendiente' && (
+                    {/* Botones de Auditoría solo para contadores */}
+                    {expense.estado === 'pendiente' && localStorage.getItem('scg_rol') === 'contador' && (
                         <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
                             <Button 
                                 onClick={() => handleCambiarEstado('aprobado')} 

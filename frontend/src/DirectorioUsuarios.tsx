@@ -12,7 +12,11 @@ interface PerfilUsuario {
     saldo_disponible?: number; // Agregado para poder editarlo
 }
 
-export default function DirectorioUsuarios() {
+interface DirectorioUsuariosProps {
+    refreshKey?: number;
+}
+
+export default function DirectorioUsuarios({ refreshKey }: DirectorioUsuariosProps) {
     const [usuarios, setUsuarios] = useState<PerfilUsuario[]>([]);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState('');
@@ -23,13 +27,15 @@ export default function DirectorioUsuarios() {
 
     useEffect(() => {
         cargarUsuarios();
-    }, []);
+    }, [refreshKey]);
 
     const cargarUsuarios = async () => {
         try {
             setCargando(true);
             const token = localStorage.getItem('scg_token');
-            const response = await fetch(`${GATEWAY_URL}/auth/usuarios?token=${token}`);
+            const response = await fetch(`${GATEWAY_URL}/auth/usuarios`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
 
             if (data.status === 'ok') {
@@ -59,9 +65,9 @@ export default function DirectorioUsuarios() {
 
         try {
             const token = localStorage.getItem('scg_token');
-            // Necesitarás crear esta ruta DELETE en tu Gateway
-            const res = await fetch(`${GATEWAY_URL}/usuarios/${id}?token=${token}`, {
+            const res = await fetch(`${GATEWAY_URL}/usuarios/${id}`, {
                 method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
             });
 
             const data = await res.json();

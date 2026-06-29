@@ -32,9 +32,9 @@ def verificar_token(token: str) -> dict | None:
             perfil = db.table("profiles").select("rol").eq("id", data.user.id).single().execute()
             if perfil.data:
                 return {
-                    "user_id": data.user.id,
+                    "user_id": str(data.user.id),
                     "email": data.user.email,
-                    "rol": perfil.data.get("rol", "operador")
+                    "rol": perfil.data.get("rol", "operario")
                 }
     except Exception as e:
         print(f"[{SERVICE_NAME}] Error verificando token: {e}")
@@ -51,15 +51,15 @@ def obtener_mi_saldo(user_id: str) -> dict:
             }
         else:
             return {"status": "error", "mensaje": "Perfil no encontrado"}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al obtener saldo."}
 
 def obtener_saldo_operario(user_id_solicitante: str, rol_solicitante: str, user_id_operario: str) -> dict:
     try:
-        if rol_solicitante not in ["contador", "admin"]:
+        if rol_solicitante not in ["contador", "tecnico"]:
             return {
                 "status": "error",
-                "mensaje": f"Solo CONTADOR/ADMIN puede ver saldos. Tu rol es: {rol_solicitante}"
+                "mensaje": "No tienes permisos para ver saldos de otros usuarios."
             }
         
         db = init_supabase()
@@ -74,12 +74,12 @@ def obtener_saldo_operario(user_id_solicitante: str, rol_solicitante: str, user_
             }
         else:
             return {"status": "error", "mensaje": "Operario no encontrado"}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al obtener saldo del operario."}
 
 def cambiar_estado(user_id_contador: str, rol_contador: str, gasto_id: str, nuevo_estado: str, motivo: str = "") -> dict:
     try:
-        if rol_contador not in ["contador", "admin"]:
+        if rol_contador not in ["contador", "tecnico"]:
             return {"status": "error", "mensaje": "Sin permisos para cambiar estado de gastos."}
             
         db = init_supabase()
@@ -110,11 +110,14 @@ def cambiar_estado(user_id_contador: str, rol_contador: str, gasto_id: str, nuev
         if nuevo_estado == "aprobado":
             operario_id = gasto["operario_id"]
             monto = gasto["monto"]
-            
+
             perfil_res = db.table("profiles").select("saldo_disponible").eq("id", operario_id).single().execute()
             saldo_actual = perfil_res.data.get("saldo_disponible", 0) if perfil_res.data else 0
-            nuevo_saldo = saldo_actual - monto
-            
+            nuevo_saldo = int(saldo_actual - monto)
+
+            if nuevo_saldo < 0:
+                return {"status": "error", "mensaje": f"Saldo insuficiente del operario. Saldo actual: ${saldo_actual}, monto del gasto: ${monto}."}
+
             db.table("profiles").update({"saldo_disponible": nuevo_saldo}).eq("id", operario_id).execute()
             
             return {
@@ -125,17 +128,20 @@ def cambiar_estado(user_id_contador: str, rol_contador: str, gasto_id: str, nuev
             }
             
         return {"status": "ok", "mensaje": f"Gasto RECHAZADO. Motivo: {motivo.strip()}"}
-        
+
     except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+        print(f"[{SERVICE_NAME}] Error en cambiar_estado: {e}")
+        return {"status": "error", "mensaje": "Error interno al cambiar estado del gasto."}
 
 def op_asignar_saldo(user_id_solicitante: str, rol_solicitante: str, user_id_operario: str, saldo: float) -> dict:
     try:
         if rol_solicitante != "tecnico":
             return {"status": "error", "mensaje": "Solo un TÉCNICO puede asignar saldo."}
-            
-        # FORZAMOS la conversión a entero para evitar el error de bigint
-        saldo_entero = int(saldo) 
+
+        if saldo < 0:
+            return {"status": "error", "mensaje": "El saldo no puede ser negativo."}
+
+        saldo_entero = int(saldo)
             
         db = init_supabase()
         # Actualizamos el saldo
@@ -145,8 +151,8 @@ def op_asignar_saldo(user_id_solicitante: str, rol_solicitante: str, user_id_ope
             return {"status": "ok", "mensaje": "Saldo actualizado correctamente."}
         else:
             return {"status": "error", "mensaje": "No se pudo actualizar el saldo."}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al asignar saldo."}
 
 
 def procesar_mensaje(raw_payload: str) -> dict:
@@ -171,14 +177,14 @@ def procesar_mensaje(raw_payload: str) -> dict:
         
         else:
             return {"status": "error", "mensaje": f"Operación '{op}' no implementada"}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno del servicio."}
 
 def main():
     sock = connect_to_bus()
     try:
         print(f"[{SERVICE_NAME}] Registrando servicio '{SERVICE_NAME}'...")
-        send_message(sock, "sinit", SERVICE_NAME)
+        send_message(sock, "sinit", f"{SERVICE_NAME}|{os.getenv('BUS_SECRET', '')}")
         confirmacion = receive_message(sock)
         print(f"[{SERVICE_NAME}] Bus confirmó: {confirmacion!r}")
         print(f"[{SERVICE_NAME}] Listo.\n")

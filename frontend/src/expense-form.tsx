@@ -74,9 +74,10 @@ export function ExpenseForm({ workerName, availableBalance, onSubmit, onCancel }
                 photo: urlData.publicUrl,
                 date: new Date(),
             });
-        } catch (err) {
+        } catch (err: any) {
             console.error("Error al procesar el gasto:", err);
-            setError("Hubo un error al subir la foto. Revisa tu conexión a internet.");
+            const detalle = err?.message || err?.error || String(err);
+            setError(`Error al subir la foto: ${detalle}`);
         } finally {
             setIsSubmitting(false);
         }

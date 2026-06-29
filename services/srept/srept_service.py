@@ -135,8 +135,10 @@ def op_listar_gastos(payload: dict) -> dict:
         gastos = [_formatear_gasto(g) for g in gastos_completos]
 
         return {"status": "ok", "gastos": gastos, "total": len(gastos), "reply_to": reply_to}
-    except Exception as e:
+    except PermissionError as e:
         return {"status": "error", "mensaje": str(e), "reply_to": reply_to}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al listar gastos.", "reply_to": reply_to}
 
 def op_detalle_gasto(payload: dict) -> dict:
     token = payload.get("token", "")
@@ -156,8 +158,10 @@ def op_detalle_gasto(payload: dict) -> dict:
 
         gastos_completos = _inyectar_perfiles(sb, resultado.data)
         return {"status": "ok", "gasto": _formatear_gasto(gastos_completos[0]), "reply_to": reply_to}
-    except Exception as e:
+    except PermissionError as e:
         return {"status": "error", "mensaje": str(e), "reply_to": reply_to}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al obtener detalle del gasto.", "reply_to": reply_to}
 
 def op_aprobar_gasto(payload: dict) -> dict:
     token = payload.get("token", "")
@@ -183,8 +187,10 @@ def op_aprobar_gasto(payload: dict) -> dict:
         }).eq("id", gasto_id).execute()
 
         return {"status": "ok", "gasto_id": gasto_id, "estado": "aprobado", "reply_to": reply_to}
-    except Exception as e:
+    except PermissionError as e:
         return {"status": "error", "mensaje": str(e), "reply_to": reply_to}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al aprobar gasto.", "reply_to": reply_to}
 
 def op_rechazar_gasto(payload: dict) -> dict:
     token = payload.get("token", "")
@@ -211,8 +217,10 @@ def op_rechazar_gasto(payload: dict) -> dict:
         }).eq("id", gasto_id).execute()
 
         return {"status": "ok", "gasto_id": gasto_id, "estado": "rechazado", "motivo": motivo, "reply_to": reply_to}
-    except Exception as e:
+    except PermissionError as e:
         return {"status": "error", "mensaje": str(e), "reply_to": reply_to}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al rechazar gasto.", "reply_to": reply_to}
 
 def op_resumen(payload: dict) -> dict:
     token = payload.get("token", "")
@@ -238,8 +246,10 @@ def op_resumen(payload: dict) -> dict:
             },
             "reply_to": reply_to,
         }
-    except Exception as e:
+    except PermissionError as e:
         return {"status": "error", "mensaje": str(e), "reply_to": reply_to}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al generar resumen.", "reply_to": reply_to}
 
 def op_reporte_pdf(payload: dict) -> dict:
     token = payload.get("token", "")
@@ -272,8 +282,10 @@ def op_reporte_pdf(payload: dict) -> dict:
             "status": "ok", "gastos": gastos_pdf, "total": sum(g["amount"] for g in gastos_pdf),
             "cantidad": len(gastos_pdf), "reply_to": reply_to,
         }
-    except Exception as e:
+    except PermissionError as e:
         return {"status": "error", "mensaje": str(e), "reply_to": reply_to}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al generar reporte PDF.", "reply_to": reply_to}
 
 # ── Dispatcher ─────────────────────────────────────────────────────────────────
 
@@ -300,7 +312,7 @@ def main():
     sock = connect_to_bus()
     try:
         print(f"[{SERVICE_NAME}] Registrando en el bus...")
-        send_message(sock, "sinit", SERVICE_NAME)
+        send_message(sock, "sinit", f"{SERVICE_NAME}|{os.getenv('BUS_SECRET', '')}")
         confirm = receive_message(sock)
         print(f"[{SERVICE_NAME}] Bus confirmó: {confirm!r}")
         print(f"[{SERVICE_NAME}] Listo. Esperando mensajes...\n")

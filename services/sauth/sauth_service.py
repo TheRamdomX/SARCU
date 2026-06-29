@@ -45,6 +45,20 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("Faltan SUPABASE_URL o SUPABASE_KEY en el archivo .env")
 
 ROLES_VALIDOS = {"operario", "contador", "tecnico"}
+MIN_PASSWORD_LENGTH = 8
+
+
+def _validar_password(password: str) -> str | None:
+    """Retorna un mensaje de error si la contraseña es débil, o None si es válida."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"La contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres."
+    if not any(c.isupper() for c in password):
+        return "La contraseña debe contener al menos una letra mayúscula."
+    if not any(c.islower() for c in password):
+        return "La contraseña debe contener al menos una letra minúscula."
+    if not any(c.isdigit() for c in password):
+        return "La contraseña debe contener al menos un número."
+    return None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -146,19 +160,6 @@ def op_verify(payload: dict) -> dict:
     token = payload.get("token", "")
     reply_to = payload.get("reply_to")
 
-    # ─────────────────────────────
-    # 🔧 MODO TEST (PING DE TOKEN FALSO)
-    # ─────────────────────────────
-    if token == "test-token":
-        return {
-            "status": "ok",
-            "user_id": "test-user",
-            "nombre": "Usuario de prueba",
-            "email": "test@local",
-            "rol": "tecnico",
-            "reply_to": reply_to
-        }
-
     if not token:
         return {
             "status": "error",
@@ -195,6 +196,10 @@ def op_create_user(payload: dict) -> dict:
         return {"status": "error",
                 "mensaje": "token, email, password, nombre y rol son obligatorios"}
 
+    error_pw = _validar_password(password)
+    if error_pw:
+        return {"status": "error", "mensaje": error_pw}
+
     if rol_nuevo not in ROLES_VALIDOS:
         return {"status": "error",
                 "mensaje": f"rol inválido. Valores posibles: {sorted(ROLES_VALIDOS)}"}
@@ -225,8 +230,8 @@ def op_create_user(payload: dict) -> dict:
 
     except PermissionError as e:
         return {"status": "error", "mensaje": str(e)}
-    except Exception as e:
-        return {"status": "error", "mensaje": f"Error al crear usuario: {str(e)}"}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al crear usuario."}
 
 
 def op_update_user(payload: dict) -> dict:
@@ -264,8 +269,8 @@ def op_update_user(payload: dict) -> dict:
 
     except PermissionError as e:
         return {"status": "error", "mensaje": str(e)}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al actualizar usuario."}
 
 
 def op_list_users(payload: dict) -> dict:
@@ -288,8 +293,8 @@ def op_list_users(payload: dict) -> dict:
 
     except PermissionError as e:
         return {"status": "error", "mensaje": str(e)}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al listar usuarios."}
 
 
 def op_update_rol(payload: dict) -> dict:
@@ -325,8 +330,8 @@ def op_update_rol(payload: dict) -> dict:
 
     except PermissionError as e:
         return {"status": "error", "mensaje": str(e)}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al actualizar rol."}
     
 def op_delete_user(payload: dict) -> dict:
     """Elimina un usuario de Supabase Auth y de la tabla profiles. Solo técnicos."""
@@ -354,8 +359,8 @@ def op_delete_user(payload: dict) -> dict:
 
     except PermissionError as e:
         return {"status": "error", "mensaje": str(e)}
-    except Exception as e:
-        return {"status": "error", "mensaje": f"Error al eliminar usuario: {str(e)}"}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al eliminar usuario."}
 
 
 
@@ -402,7 +407,7 @@ def main():
 
     try:
         print(f"[sauth] Registrando servicio '{SERVICE_NAME}' en el bus...")
-        send_message(sock, "sinit", SERVICE_NAME)
+        send_message(sock, "sinit", f"{SERVICE_NAME}|{os.getenv('BUS_SECRET', '')}")
 
         confirmacion = receive_message(sock)
         print(f"[sauth] Bus confirmó: {confirmacion!r}")

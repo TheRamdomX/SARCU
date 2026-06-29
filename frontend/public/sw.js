@@ -1,10 +1,9 @@
-const CACHE_NAME = 'gastos-v1';
+const CACHE_NAME = 'gastos-v2';
 const urlsToCache = [
   '/',
   '/manifest.json',
 ];
 
-// Instalación del Service Worker
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -13,7 +12,6 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activación del Service Worker
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -28,12 +26,24 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Estrategia de cache: Network First, fallback to cache
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  const isAPI = url.pathname.startsWith('/auth') ||
+    url.pathname.startsWith('/gastos') ||
+    url.pathname.startsWith('/saldos') ||
+    url.pathname.startsWith('/comprobantes') ||
+    url.pathname.startsWith('/reportes') ||
+    url.pathname.startsWith('/usuarios') ||
+    url.origin !== self.location.origin;
+
+  if (isAPI) {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Clona la respuesta antes de cachearla
         const responseToCache = response.clone();
         caches.open(CACHE_NAME).then((cache) => {
           cache.put(event.request, responseToCache);
@@ -44,4 +54,12 @@ self.addEventListener('fetch', (event) => {
         return caches.match(event.request);
       })
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'CLEAR_CACHE') {
+    caches.keys().then((cacheNames) => {
+      return Promise.all(cacheNames.map((name) => caches.delete(name)));
+    });
+  }
 });

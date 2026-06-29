@@ -1,12 +1,10 @@
 import json
 import time
-from soa_lib import connect_to_bus, send_message, receive_message
 import os
-import uuid as uuid_lib
 from supabase import create_client
+from soa_lib import connect_to_bus, send_message, receive_message
 SERVICE_NAME = "scomp"
 
-TEST_TOKEN = "test-token-123"
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
@@ -18,6 +16,22 @@ BUCKET = "comprobantes"
 # HELPERS
 # ─────────────────────────────────────────────
 
+SUPABASE_STORAGE_DOMAIN = os.environ.get("SUPABASE_URL", "").replace("https://", "").replace("http://", "")
+
+
+def _validar_url_comprobante(url: str) -> bool:
+    """Valida que la URL pertenezca al bucket de comprobantes del proyecto Supabase."""
+    if not url:
+        return False
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if not SUPABASE_STORAGE_DOMAIN or SUPABASE_STORAGE_DOMAIN not in parsed.netloc:
+        return False
+    if f"/storage/v1/object/public/{BUCKET}/" not in url:
+        return False
+    return True
+
+
 def _get_perfil(user_id: str) -> dict | None:
     res = supabase.table("profiles").select("rol").eq("id", user_id).single().execute()
     return res.data
@@ -27,23 +41,11 @@ def _get_perfil(user_id: str) -> dict | None:
 # OPERACIONES DE COMPROBANTES
 # ─────────────────────────────────────────────
 
-def subir_comprobante(payload: dict) -> dict:
+def subir_comprobante(payload: dict, user_id: str) -> dict:
     """
-    Sube un archivo al bucket y devuelve la URL pública.
-    El frontend ya subió el archivo; aquí solo se registra la URL
-    y opcionalmente se vincula al gasto.
-
-    Si el frontend usa Supabase Storage directamente (recomendado),
-    este endpoint solo persiste la URL en el gasto.
-
-    payload: {
-        "op": "subir_comprobante",
-        "user_id": "uuid",
-        "gasto_id": "uuid",
-        "url": "https://...supabase.co/storage/v1/object/public/comprobantes/..."
-    }
+    Registra la URL del comprobante ya subido por el frontend.
+    user_id proviene del token verificado, no del payload.
     """
-    user_id  = payload.get("user_id")
     gasto_id = payload.get("gasto_id")
     url      = payload.get("url", "").strip()
 
@@ -52,6 +54,9 @@ def subir_comprobante(payload: dict) -> dict:
         return {"status": "error", "mensaje": "Solo operarios pueden subir comprobantes"}
     if not gasto_id or not url:
         return {"status": "error", "mensaje": "Faltan campos: gasto_id, url"}
+
+    if not _validar_url_comprobante(url):
+        return {"status": "error", "mensaje": "URL de comprobante no válida"}
 
     # Verificar que el gasto pertenece al operario y está pendiente
     res = supabase.table("gastos").select("operario_id,estado").eq("id", gasto_id).single().execute()
@@ -64,20 +69,16 @@ def subir_comprobante(payload: dict) -> dict:
     if gasto["estado"] != "pendiente":
         return {"status": "error", "mensaje": "Solo se puede adjuntar a gastos pendientes"}
 
-    # Actualizar URL en la tabla gastos
     supabase.table("gastos").update({"comprobante_url": url}).eq("id", gasto_id).execute()
 
     return {"status": "ok", "url": url, "gasto_id": gasto_id}
 
 
-def obtener_url(payload: dict) -> dict:
+def obtener_url(payload: dict, user_id: str) -> dict:
     """
-    Devuelve la URL pública del comprobante de un gasto.
-    Cualquier rol autenticado puede acceder.
-
-    payload: { "op": "obtener_url", "user_id": "uuid", "gasto_id": "uuid" }
+    Devuelve la URL del comprobante de un gasto.
+    user_id proviene del token verificado.
     """
-    user_id  = payload.get("user_id")
     gasto_id = payload.get("gasto_id")
 
     if not _get_perfil(user_id):
@@ -94,34 +95,16 @@ def obtener_url(payload: dict) -> dict:
     return {"status": "ok", "url": url}
 
 
-def vincular_comprobante(payload: dict) -> dict:
-    """
-    Vincula manualmente una URL ya existente en Storage a un gasto.
-    Útil si el frontend sube directo a Supabase y luego notifica al bus.
-
-    payload: {
-        "op": "vincular_comprobante",
-        "user_id": "uuid",
-        "gasto_id": "uuid",
-        "url": "https://..."
-    }
-    """
-    # Reutiliza la misma lógica que subir_comprobante
-    return subir_comprobante(payload)
+def vincular_comprobante(payload: dict, user_id: str) -> dict:
+    """Vincula una URL ya existente en Storage a un gasto."""
+    return subir_comprobante(payload, user_id)
 
 
-def eliminar_comprobante(payload: dict) -> dict:
+def eliminar_comprobante(payload: dict, user_id: str) -> dict:
     """
     Elimina el comprobante del bucket y limpia la URL en el gasto.
-    Solo el operario dueño puede hacerlo, y solo si el gasto está pendiente.
-
-    payload: {
-        "op": "eliminar_comprobante",
-        "user_id": "uuid",
-        "gasto_id": "uuid"
-    }
+    user_id proviene del token verificado.
     """
-    user_id  = payload.get("user_id")
     gasto_id = payload.get("gasto_id")
 
     perfil = _get_perfil(user_id)
@@ -142,13 +125,14 @@ def eliminar_comprobante(payload: dict) -> dict:
     if not url:
         return {"status": "error", "mensaje": "Este gasto no tiene comprobante"}
 
-    # Extraer la ruta relativa del bucket desde la URL pública
-    # URL pública: https://<project>.supabase.co/storage/v1/object/public/comprobantes/<path>
+    if not _validar_url_comprobante(url):
+        return {"status": "error", "mensaje": "URL de comprobante almacenada no es válida"}
+
     try:
         path = url.split(f"/object/public/{BUCKET}/")[-1]
         supabase.storage.from_(BUCKET).remove([path])
-    except Exception as e:
-        return {"status": "error", "mensaje": f"Error al eliminar del storage: {e}"}
+    except Exception:
+        return {"status": "error", "mensaje": "Error al eliminar del storage"}
 
     # Limpiar URL en la tabla
     supabase.table("gastos").update({"comprobante_url": None}).eq("id", gasto_id).execute()
@@ -193,73 +177,48 @@ def verificar_token(sock, token: str) -> dict:
     return respuesta
 
 
-def ping_test(sock) -> dict:
-    print("[scomp] enviando verify con TEST_TOKEN...")
-    return verificar_token(sock, TEST_TOKEN)
-
-
 def procesar_mensaje(sock, raw_payload: str) -> dict:
     try:
         payload = json.loads(raw_payload)
         op = payload.get("op")
 
-        if op == "ping_test":
-            return ping_test(sock)
-        if op == "verificar_token":
-            token = payload.get("token", TEST_TOKEN)
-            return verificar_token(sock, token)
+        if op == "ping":
+            return {"status": "ok", "mensaje": "pong"}
 
-        # ── Comprobantes ─────────────────────────
+        token = payload.get("token")
+        if not token:
+            return {"status": "error", "mensaje": "Token es obligatorio"}
+
+        auth_result = verificar_token(sock, token)
+        if auth_result.get("status") != "ok":
+            return {"status": "error", "mensaje": "Token inválido o expirado"}
+
+        user_id = auth_result.get("user_id")
+
         if op == "subir_comprobante":
-            return subir_comprobante(payload)
+            return subir_comprobante(payload, user_id)
         if op == "obtener_url":
-            return obtener_url(payload)
+            return obtener_url(payload, user_id)
         if op == "vincular_comprobante":
-            return vincular_comprobante(payload)
+            return vincular_comprobante(payload, user_id)
         if op == "eliminar_comprobante":
-            return eliminar_comprobante(payload)
+            return eliminar_comprobante(payload, user_id)
 
         return {"status": "error", "mensaje": f"op '{op}' no soportada"}
 
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno del servicio"}
 
 
 def main():
     sock = connect_to_bus()
 
     print("[scomp] registrando...")
-    send_message(sock, "sinit", SERVICE_NAME)
+    send_message(sock, "sinit", f"{SERVICE_NAME}|{os.getenv('BUS_SECRET', '')}")
     receive_message(sock)
 
     print("[scomp] listo y escuchando")
 
-    # ─────────────────────────────────────────────
-    # ⏳ CUENTA REGRESIVA SIMPLE
-    # ─────────────────────────────────────────────
-    print("[scomp] preparando test con sauth...")
-
-    for i in range(3, 0, -1):
-        print(f"[scomp] enviando test en {i}...")
-        time.sleep(1)
-
-    # ─────────────────────────────────────────────
-    # TEST INICIAL
-    # ─────────────────────────────────────────────
-    print("[scomp] test inicial con sauth...")
-
-    send_message(sock, "sauth", json.dumps({
-        "op": "ping",
-        "reply_to": SERVICE_NAME
-    }))
-
-    resp = esperar_respuesta(sock, SERVICE_NAME)
-
-    print("[scomp] respuesta sauth test:", resp)
-
-    # ─────────────────────────────────────────────
-    # LOOP PRINCIPAL
-    # ─────────────────────────────────────────────
     while True:
         print("[scomp] esperando mensajes...")
 

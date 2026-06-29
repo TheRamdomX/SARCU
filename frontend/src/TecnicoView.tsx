@@ -5,9 +5,10 @@ import DirectorioUsuarios from './DirectorioUsuarios';
 
 export default function TecnicoView() {
     const [usuario, setUsuario] = useState({
-        nombre: "Técnico de Soporte", 
+        nombre: "Técnico de Soporte",
         rol: "tecnico"
     });
+    const [refreshKey, setRefreshKey] = useState(0);
 
     useEffect(() => {
         // Opcional: Leer el nombre real del técnico si lo tienes guardado
@@ -75,11 +76,11 @@ export default function TecnicoView() {
                         <UserPlus className="h-5 w-5 text-cyan-600" />
                         <h2 className="text-lg font-semibold text-gray-800">Registrar Nuevo Personal</h2>
                     </div>
-                    <CrearUsuario />
+                    <CrearUsuario onUsuarioCreado={() => setRefreshKey(k => k + 1)} />
                 </div>
 
                 {/* Directorio de Usuarios (¡Ahora sí, el componente real!) */}
-                <DirectorioUsuarios />
+                <DirectorioUsuarios refreshKey={refreshKey} />
 
             </div>
         </div>

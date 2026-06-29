@@ -1,8 +1,15 @@
+import os
 import socket
 import threading
 
 HOST = "0.0.0.0"
 PORT = 5000
+
+# Secreto compartido para autenticar el registro de servicios (sinit).
+# Debe estar definido en el entorno de cada servicio y del bus.
+BUS_SECRET = os.getenv("BUS_SECRET", "")
+if not BUS_SECRET:
+    print("[BUS] ⚠ BUS_SECRET no está definido: el registro de servicios NO está autenticado.")
 
 # servicio -> socket
 servicios = {}
@@ -77,9 +84,26 @@ def client_handler(sock, addr):
             # REGISTRO DE SERVICIO
             # =========================
             if destino == "sinit":
-                nombre_servicio = payload
+                # El payload de registro tiene el formato "<nombre>|<secreto>".
+                # El nombre se usa como clave de enrutamiento; el secreto autentica.
+                if "|" in payload:
+                    nombre_servicio, secreto = payload.split("|", 1)
+                else:
+                    nombre_servicio, secreto = payload, ""
 
+                # Autenticación del registro: solo clientes con el secreto válido.
+                if BUS_SECRET and secreto != BUS_SECRET:
+                    print(f"[BUS] ❌ Registro rechazado para '{nombre_servicio}' desde {addr}: secreto inválido")
+                    send_raw(sock, "sinit", "ERROR")
+                    break
+
+                # Anti-secuestro: no permitir reemplazar el registro de un
+                # servicio ya activo a menos que el secreto sea válido.
                 with lock:
+                    if nombre_servicio in servicios and not BUS_SECRET:
+                        print(f"[BUS] ❌ '{nombre_servicio}' ya está registrado; registro duplicado rechazado")
+                        send_raw(sock, "sinit", "ERROR")
+                        break
                     servicios[nombre_servicio] = sock
 
                 servicio_registrado = nombre_servicio

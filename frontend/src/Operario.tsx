@@ -46,8 +46,9 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
             const rol = localStorage.getItem('scg_rol') || 'operario';
             if (!token) return;
 
-            // Consultamos al microservicio ssald
-            const resSaldo = await fetch(`${GATEWAY_URL}/saldos/mio?token=${token}`);
+            const authHeaders = { 'Authorization': `Bearer ${token}` };
+
+            const resSaldo = await fetch(`${GATEWAY_URL}/saldos/mio`, { headers: authHeaders });
             const dataSaldo = await resSaldo.json();
 
             if (dataSaldo.status === 'ok') {
@@ -58,8 +59,7 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
                 }));
             }
 
-            // Consultamos al microservicio sgast
-            const resGastos = await fetch(`${GATEWAY_URL}/gastos?token=${token}`);
+            const resGastos = await fetch(`${GATEWAY_URL}/gastos`, { headers: authHeaders });
             const dataGastos = await resGastos.json();
 
             if (dataGastos.status === 'ok' && dataGastos.gastos) {
@@ -132,12 +132,12 @@ export default function Operario({ onReturnToAdmin }: OperarioProps) {
     }
 
 const handleCerrarSesion = () => {
-    // Borra toda la información de sesión guardada
-    localStorage.clear(); 
-    sessionStorage.clear(); // Por si acaso están usando sessionStorage
-    
-    // Redirige al login
-    window.location.href = '/'; 
+    localStorage.clear();
+    sessionStorage.clear();
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' });
+    }
+    window.location.href = '/';
 };
 
     

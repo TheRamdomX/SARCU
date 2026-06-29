@@ -40,41 +40,66 @@ def verificar_token(token: str) -> dict | None:
         print(f"[{SERVICE_NAME}] Error verificando token: {e}")
     return None
 
+def _validar_url_comprobante(url: str) -> bool:
+    """Valida que la URL pertenezca al dominio Supabase y al bucket de comprobantes."""
+    if not url:
+        return True
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    supabase_domain = SUPABASE_URL.replace("https://", "").replace("http://", "")
+    if supabase_domain not in parsed.netloc:
+        return False
+    if "/storage/v1/object/public/comprobantes/" not in url:
+        return False
+    return True
+
+
 def crear_gasto(payload: dict, user_id: str, rol: str) -> dict:
     try:
         monto = payload.get("monto")
         concepto = payload.get("concepto", "").strip()
         fecha = payload.get("fecha")
-        foto_url = payload.get("comprobanteUrl")
+        comprobante_url = payload.get("comprobanteUrl")
 
         if not all([monto, concepto, fecha]):
             return {"status": "error", "mensaje": "Faltan campos obligatorios (monto, concepto, fecha)."}
 
-        nuevo = {
-            "operario_id": user_id,                 
-            "monto": payload["monto"],             
-            "descripcion": payload["concepto"],     
-            "fecha": payload["fecha"],              
-            "comprobante_url": payload["comprobanteUrl"]
-        }
+        if monto is not None and (not isinstance(monto, (int, float)) or monto <= 0):
+            return {"status": "error", "mensaje": "El monto debe ser un número positivo."}
+
+        if comprobante_url and not _validar_url_comprobante(comprobante_url):
+            return {"status": "error", "mensaje": "URL de comprobante no válida."}
 
         db = init_supabase()
+
+        perfil = db.table("profiles").select("saldo_disponible").eq("id", user_id).single().execute()
+        saldo_disponible = perfil.data.get("saldo_disponible", 0) if perfil.data else 0
+        if monto > saldo_disponible:
+            return {"status": "error", "mensaje": f"El monto (${monto}) excede tu saldo disponible (${saldo_disponible})."}
+
+        nuevo = {
+            "operario_id": user_id,
+            "monto": monto,
+            "descripcion": concepto,
+            "fecha": fecha,
+            "comprobante_url": comprobante_url,
+        }
+
         res = db.table("gastos").insert(nuevo).execute()
 
         if not res.data:
             return {"status": "error", "mensaje": "Error al guardar el gasto en la base de datos."}
 
         return {"status": "ok", "gasto": res.data[0]}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al crear el gasto."}
 
 def listar_gastos(payload: dict, user_id: str, rol: str) -> dict:
     try:
         db = init_supabase()
         query = db.table("gastos").select("*")
 
-        # Si no es admin ni contador, solo ve sus propias boletas
-        if rol not in ["admin", "contador"]:
+        if rol not in ["tecnico", "contador"]:
             query = query.eq("operario_id", user_id)
 
         estado = payload.get("estado")
@@ -86,8 +111,8 @@ def listar_gastos(payload: dict, user_id: str, rol: str) -> dict:
         res = query.execute()
 
         return {"status": "ok", "gastos": res.data or []}
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno al listar gastos."}
 
 def procesar_mensaje(raw_payload: str) -> dict:
     try:
@@ -111,14 +136,14 @@ def procesar_mensaje(raw_payload: str) -> dict:
         else:
             return {"status": "error", "mensaje": f"op '{op}' no soportada por {SERVICE_NAME}"}
 
-    except Exception as e:
-        return {"status": "error", "mensaje": str(e)}
+    except Exception:
+        return {"status": "error", "mensaje": "Error interno del servicio."}
 
 def main():
     sock = connect_to_bus()
     try:
         print(f"[{SERVICE_NAME}] registrando...")
-        send_message(sock, "sinit", SERVICE_NAME)
+        send_message(sock, "sinit", f"{SERVICE_NAME}|{os.getenv('BUS_SECRET', '')}")
         confirmacion = receive_message(sock)
         print(f"[{SERVICE_NAME}] Bus confirmó: {confirmacion!r}")
         print(f"[{SERVICE_NAME}] listo y escuchando\n")

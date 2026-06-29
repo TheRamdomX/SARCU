@@ -10,8 +10,11 @@ services:
   bus:
     build: ./bus
     container_name: scg-bus
-    ports:
-      - "5000:5000"
+    # El puerto NO se publica al host: el bus solo es accesible dentro de scg-net.
+    expose:
+      - "5000"
+    environment:
+      BUS_SECRET: ${BUS_SECRET}
     networks:
       - scg-net
     healthcheck:
@@ -32,6 +35,7 @@ services:
     environment:
       BUS_HOST: bus
       BUS_PORT: "5000"
+      BUS_SECRET: ${BUS_SECRET}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_KEY: ${SUPABASE_KEY}
     networks:
@@ -50,6 +54,7 @@ services:
     environment:
       BUS_HOST: bus
       BUS_PORT: "5000"
+      BUS_SECRET: ${BUS_SECRET}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_KEY: ${SUPABASE_KEY}
     networks:
@@ -68,6 +73,7 @@ services:
     environment:
       BUS_HOST: bus
       BUS_PORT: "5000"
+      BUS_SECRET: ${BUS_SECRET}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_KEY: ${SUPABASE_KEY}
     networks:
@@ -86,6 +92,7 @@ services:
     environment:
       BUS_HOST: bus
       BUS_PORT: "5000"
+      BUS_SECRET: ${BUS_SECRET}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_KEY: ${SUPABASE_KEY}
     networks:
@@ -104,6 +111,7 @@ services:
     environment:
       BUS_HOST: bus
       BUS_PORT: "5000"
+      BUS_SECRET: ${BUS_SECRET}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_KEY: ${SUPABASE_KEY}
     networks:
@@ -122,11 +130,12 @@ services:
     environment:
       BUS_HOST: bus
       BUS_PORT: "5000"
+      BUS_SECRET: ${BUS_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     networks:
       - scg-net
     restart: on-failure:5
 
-  # ── Frontend React + Vite ─────────────────────────────────────────────────
 # ── Frontend React + Vite ─────────────────────────────────────────────────
   frontend:
     build: ./frontend
@@ -138,7 +147,8 @@ services:
     environment:
       VITE_GATEWAY_URL: http://localhost:8000
       VITE_SUPABASE_URL: ${SUPABASE_URL}
-      VITE_SUPABASE_ANON_KEY: ${SUPABASE_KEY}
+      # Clave ANON (bajo privilegio) — NUNCA la service_role del backend.
+      VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public

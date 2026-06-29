@@ -5,17 +5,55 @@ import { LoginForm } from './LoginForm';
 import { loginSOA } from './lib/api';
 import TecnicoView from './TecnicoView';
 
+const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8000';
+
 function App() {
-  // Inicializamos el estado leyendo directamente del almacenamiento local
   const [token, setToken] = useState<string | null>(localStorage.getItem('scg_token'));
-  const [rol, setRol] = useState<string | null>(localStorage.getItem('scg_rol'));
-  const [cargando, setCargando] = useState(false);
+  const [rol, setRol] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(!!localStorage.getItem('scg_token'));
   const [vistaActiva, setVistaActiva] = useState<'admin' | 'operario'>('admin');
 
   useEffect(() => {
+    const savedToken = localStorage.getItem('scg_token');
+    if (savedToken) {
+      verificarSesion(savedToken);
+    }
+  }, []);
+
+  async function verificarSesion(tokenActual: string) {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/auth/verify`, {
+        headers: { 'Authorization': `Bearer ${tokenActual}` }
+      });
+      if (!res.ok) {
+        localStorage.clear();
+        setToken(null);
+        setRol(null);
+        return;
+      }
+      const data = await res.json();
+      if (data.status === 'ok') {
+        const rolVerificado = data.rol || 'operario';
+        localStorage.setItem('scg_rol', rolVerificado);
+        setRol(rolVerificado);
+        setVistaActiva(rolVerificado === 'contador' ? 'admin' : 'operario');
+      } else {
+        localStorage.clear();
+        setToken(null);
+        setRol(null);
+      }
+    } catch {
+      localStorage.clear();
+      setToken(null);
+      setRol(null);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
     if (rol) {
-      // Si el rol es admin o contador, permitimos el acceso al panel administrativo
-      setVistaActiva(rol === 'admin' || rol === 'contador' ? 'admin' : 'operario');
+      setVistaActiva(rol === 'contador' ? 'admin' : 'operario');
     }
   }, [rol]);
 
@@ -54,7 +92,7 @@ function App() {
     return <LoginForm onLogin={handleLogin} />;
   }
 
-  const esAdministrador = rol === 'admin' || rol === 'contador';
+  const esAdministrador = rol === 'contador';
 
   if (esAdministrador && vistaActiva === 'admin') {
     return <AdminView onSwitchView={() => setVistaActiva('operario')} />;
